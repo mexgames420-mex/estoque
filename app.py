@@ -773,16 +773,30 @@ class App(BaseHTTPRequestHandler):
         if status not in STATUSES:
             return self.redirect("/accounts")
         conn = db()
-        conn.execute(
-            """
-            UPDATE accounts
-               SET status = ?,
-                   status_changed_at = ?,
-                   updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?
-            """,
-            (status, date.today().isoformat(), account_id),
-        )
+        today = date.today().isoformat()
+        if status == "Conta em utilização":
+            conn.execute(
+                """
+                UPDATE accounts
+                   SET status = ?,
+                       last_sent_at = ?,
+                       status_changed_at = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """,
+                (status, today, today, account_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE accounts
+                   SET status = ?,
+                       status_changed_at = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """,
+                (status, today, account_id),
+            )
         conn.commit()
         conn.close()
         self.redirect("/accounts")
