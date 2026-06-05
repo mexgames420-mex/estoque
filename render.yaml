@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: mex-games-estoque
+    env: python
+    plan: starter
+    buildCommand: ""
+    startCommand: "python3 app.py"
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATA_DIR
+        value: /opt/render/project/src/storage
+      - key: APP_USER
+        value: admin
+      - key: APP_PASSWORD
+        sync: false
+    disk:
+      name: mex-games-data
+      mountPath: /opt/render/project/src/storage
+      sizeGB: 1
