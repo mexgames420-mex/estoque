@@ -251,7 +251,7 @@ button.primary:hover,
 
 table {
     border-collapse: collapse;
-    min-width: 920px;
+    min-width: 760px;
     width: 100%;
 }
 
@@ -321,7 +321,9 @@ th {
     display: grid;
     gap: 8px;
     grid-template-columns: minmax(190px, 1fr) auto;
-    min-width: 280px;
+    margin-top: 8px;
+    max-width: 360px;
+    min-width: 260px;
 }
 
 .status-form select,

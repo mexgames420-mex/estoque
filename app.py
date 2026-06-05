@@ -629,12 +629,14 @@ class App(BaseHTTPRequestHandler):
         head = """
         <thead><tr>
             <th>Plataforma</th><th>Produto/Jogo</th><th>Mídia</th><th>E-mail</th>
-            <th>Status</th><th>Último envio</th><th>Observações</th><th>Alterar status</th>
+            <th>Status / Alterar</th><th>Último envio</th>
         </tr></thead>
         """
         body_rows = []
         for row in rows:
-            actions = "" if compact else self.status_action(row)
+            status_cell = self.status_badge(row)
+            if not compact:
+                status_cell += self.status_action(row)
             body_rows.append(
                 f"""
                 <tr>
@@ -642,14 +644,15 @@ class App(BaseHTTPRequestHandler):
                     <td>{esc(row['product'])}</td>
                     <td>{esc(row['media_type'])}</td>
                     <td>{esc(row['email'])}</td>
-                    <td><span class="badge {self.status_class(row['status'])}">{esc(row['status'])}</span></td>
+                    <td>{status_cell}</td>
                     <td>{esc(self.format_date(row['last_sent_at']))}</td>
-                    <td>{esc(row['notes'])}</td>
-                    <td>{actions}</td>
                 </tr>
                 """
             )
         return f'<div class="table-wrap"><table>{head}<tbody>{"".join(body_rows)}</tbody></table></div>'
+
+    def status_badge(self, row):
+        return f'<span class="badge {self.status_class(row["status"])}">{esc(row["status"])}</span>'
 
     def status_class(self, status):
         return {
