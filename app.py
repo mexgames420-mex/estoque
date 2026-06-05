@@ -522,6 +522,8 @@ class App(BaseHTTPRequestHandler):
             return self.add_block(user)
         if path == "/import":
             return self.redirect("/blocks")
+        if path == "/admin/delete-product-contains":
+            return self.delete_product_contains(user)
         self.send_html(layout("Não encontrado", "<h1>Página não encontrada</h1>", user), 404)
 
     def serve_static(self, path):
@@ -830,6 +832,21 @@ class App(BaseHTTPRequestHandler):
         conn.commit()
         conn.close()
         self.redirect("/accounts")
+
+    def delete_product_contains(self, user):
+        form = self.read_form()
+        product = form.get("product", "").strip()
+        if not product:
+            self.send_html("Informe o produto.", 400)
+            return
+        conn = db()
+        cur = conn.execute(
+            "DELETE FROM accounts WHERE lower(product) LIKE '%' || lower(?) || '%'",
+            (product,),
+        )
+        conn.commit()
+        conn.close()
+        self.send_html(f"{cur.rowcount} conta(s) removidas contendo produto: {esc(product)}")
 
     def reports(self, user):
         filters = self.filters_from_query()
