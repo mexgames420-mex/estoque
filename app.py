@@ -2,6 +2,7 @@
 import base64
 import hmac
 import html
+import json
 import os
 import re
 import sqlite3
@@ -21,12 +22,19 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
 PLATFORMS = ["Playstation", "Xbox"]
 MEDIA_TYPES = ["Primária", "Secundária"]
-STATUSES = [
+COMMON_STATUSES = [
     "Conta em utilização",
-    "Disponível para teste de reenvio 60 dias",
-    "Disponível para teste de reenvio 90 dias",
     "Não funcionou o Reenvio",
 ]
+PLAYSTATION_STATUSES = [
+    "Disponível para teste de reenvio 60 dias",
+    "Disponível para teste de reenvio 90 dias",
+]
+XBOX_STATUSES = [
+    "Disponível para teste de reenvio Xbox 60 dias",
+    "Disponível para teste de reenvio Xbox 120 dias",
+]
+STATUSES = COMMON_STATUSES + PLAYSTATION_STATUSES + XBOX_STATUSES
 DATE_PATTERN = r"\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}"
 DATE_RE = re.compile(rf"\b({DATE_PATTERN})\b")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
@@ -87,9 +95,26 @@ def init_db(seed=False):
     migrate_statuses()
 
 
+def allowed_statuses(platform):
+    if platform == "Xbox":
+        return COMMON_STATUSES + XBOX_STATUSES
+    return COMMON_STATUSES + PLAYSTATION_STATUSES
+
+
+def review_status_for_account(platform, media_type, days):
+    if platform == "Xbox":
+        if media_type == "Primária":
+            return "Disponível para teste de reenvio Xbox 120 dias"
+        return "Disponível para teste de reenvio Xbox 60 dias"
+    if days >= 90:
+        return "Disponível para teste de reenvio 90 dias"
+    return "Disponível para teste de reenvio 60 dias"
+
+
 def apply_90_day_rule():
     cutoff_90 = (date.today() - timedelta(days=90)).isoformat()
     cutoff_60 = (date.today() - timedelta(days=60)).isoformat()
+    cutoff_120 = (date.today() - timedelta(days=120)).isoformat()
     failed_cutoff = (date.today() - timedelta(days=30)).isoformat()
     conn = db()
     conn.execute(
@@ -99,6 +124,7 @@ def apply_90_day_rule():
                status_changed_at = ?,
                updated_at = CURRENT_TIMESTAMP
          WHERE status IN ('Conta em utilização', 'Enviada', 'Disponível para teste de reenvio', 'Disponível para teste de reenvio 60 dias')
+           AND platform = 'Playstation'
            AND last_sent_at IS NOT NULL
            AND last_sent_at <= ?
         """,
@@ -111,6 +137,7 @@ def apply_90_day_rule():
                status_changed_at = ?,
                updated_at = CURRENT_TIMESTAMP
          WHERE status IN ('Conta em utilização', 'Enviada')
+           AND platform = 'Playstation'
            AND last_sent_at IS NOT NULL
            AND last_sent_at <= ?
         """,
@@ -119,7 +146,39 @@ def apply_90_day_rule():
     conn.execute(
         """
         UPDATE accounts
-           SET status = 'Disponível para teste de reenvio 90 dias',
+           SET status = 'Disponível para teste de reenvio Xbox 120 dias',
+               status_changed_at = ?,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE status IN ('Conta em utilização', 'Enviada')
+           AND platform = 'Xbox'
+           AND media_type = 'Primária'
+           AND last_sent_at IS NOT NULL
+           AND last_sent_at <= ?
+        """,
+        (date.today().isoformat(), cutoff_120),
+    )
+    conn.execute(
+        """
+        UPDATE accounts
+           SET status = 'Disponível para teste de reenvio Xbox 60 dias',
+               status_changed_at = ?,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE status IN ('Conta em utilização', 'Enviada')
+           AND platform = 'Xbox'
+           AND media_type = 'Secundária'
+           AND last_sent_at IS NOT NULL
+           AND last_sent_at <= ?
+        """,
+        (date.today().isoformat(), cutoff_60),
+    )
+    conn.execute(
+        """
+        UPDATE accounts
+           SET status = CASE
+                   WHEN platform = 'Xbox' AND media_type = 'Primária' THEN 'Disponível para teste de reenvio Xbox 120 dias'
+                   WHEN platform = 'Xbox' THEN 'Disponível para teste de reenvio Xbox 60 dias'
+                   ELSE 'Disponível para teste de reenvio 90 dias'
+               END,
                status_changed_at = ?,
                updated_at = CURRENT_TIMESTAMP
          WHERE status = 'Não funcionou o Reenvio'
@@ -138,6 +197,15 @@ def normalize_status(value):
     if value in STATUSES:
         return value
     return "Conta em utilização"
+
+
+def normalize_status_for_platform(status, platform, media_type):
+    status = normalize_status(status)
+    if status in COMMON_STATUSES:
+        return status
+    if status in allowed_statuses(platform):
+        return status
+    return review_status_for_account(platform, media_type, 90)
 
 
 def ensure_status_changed_column(conn):
@@ -184,6 +252,44 @@ def migrate_statuses():
                updated_at = CURRENT_TIMESTAMP
          WHERE platform IN ('PS4', 'PS5')
         """
+    )
+    conn.execute(
+        """
+        UPDATE accounts
+           SET status = CASE
+                   WHEN media_type = 'Primária' AND last_sent_at IS NOT NULL AND last_sent_at <= ? THEN 'Disponível para teste de reenvio Xbox 120 dias'
+                   WHEN media_type = 'Secundária' AND last_sent_at IS NOT NULL AND last_sent_at <= ? THEN 'Disponível para teste de reenvio Xbox 60 dias'
+                   ELSE 'Conta em utilização'
+               END,
+               status_changed_at = CASE WHEN status_changed_at = '' THEN ? ELSE status_changed_at END,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE platform = 'Xbox'
+           AND status IN ('Disponível para teste de reenvio 60 dias', 'Disponível para teste de reenvio 90 dias')
+        """,
+        (
+            (date.today() - timedelta(days=120)).isoformat(),
+            (date.today() - timedelta(days=60)).isoformat(),
+            date.today().isoformat(),
+        ),
+    )
+    conn.execute(
+        """
+        UPDATE accounts
+           SET status = CASE
+                   WHEN last_sent_at IS NOT NULL AND last_sent_at <= ? THEN 'Disponível para teste de reenvio 90 dias'
+                   WHEN last_sent_at IS NOT NULL AND last_sent_at <= ? THEN 'Disponível para teste de reenvio 60 dias'
+                   ELSE 'Conta em utilização'
+               END,
+               status_changed_at = CASE WHEN status_changed_at = '' THEN ? ELSE status_changed_at END,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE platform = 'Playstation'
+           AND status IN ('Disponível para teste de reenvio Xbox 60 dias', 'Disponível para teste de reenvio Xbox 120 dias')
+        """,
+        (
+            (date.today() - timedelta(days=90)).isoformat(),
+            (date.today() - timedelta(days=60)).isoformat(),
+            date.today().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -380,8 +486,45 @@ def options(items, selected="", blank="Todos"):
     return "".join(rows)
 
 
+def status_options(platform, selected="", blank=None):
+    return options(allowed_statuses(platform), selected, blank)
+
+
+def account_status_script(selected):
+    status_map = {platform: allowed_statuses(platform) for platform in PLATFORMS}
+    return f"""
+    <script>
+    (() => {{
+        const platform = document.querySelector('[name="platform"]');
+        const status = document.querySelector('[name="status"]');
+        const statusMap = {json.dumps(status_map, ensure_ascii=False)};
+        const initial = {json.dumps(selected, ensure_ascii=False)};
+        function refreshStatus() {{
+            const current = status.value || initial;
+            const allowed = statusMap[platform.value] || statusMap.Playstation;
+            status.innerHTML = "";
+            for (const item of allowed) {{
+                const option = document.createElement("option");
+                option.value = item;
+                option.textContent = item;
+                option.selected = item === current;
+                status.appendChild(option);
+            }}
+            if (!allowed.includes(status.value)) {{
+                status.value = "Conta em utilização";
+            }}
+        }}
+        platform.addEventListener("change", refreshStatus);
+        refreshStatus();
+    }})();
+    </script>
+    """
+
+
 def account_form(row=None, errors=None):
     row = row or {}
+    platform = row.get("platform", "Playstation")
+    status = normalize_status_for_platform(row.get("status", "Conta em utilização"), platform, row.get("media_type", "Primária"))
     errors_html = ""
     if errors:
         errors_html = '<div class="alert error">' + "<br>".join(esc(e) for e in errors) + "</div>"
@@ -407,7 +550,7 @@ def account_form(row=None, errors=None):
             <input type="email" name="email" value="{esc(row.get('email', ''))}" required maxlength="160">
         </label>
         <label>Status
-            <select name="status" required>{options(STATUSES, row.get('status', 'Conta em utilização'), None)}</select>
+            <select name="status" required>{status_options(platform, status, None)}</select>
         </label>
         <label>Data do último envio
             <input type="date" name="last_sent_at" value="{esc(row.get('last_sent_at', '') or '')}">
@@ -420,6 +563,7 @@ def account_form(row=None, errors=None):
             <a class="button" href="/accounts">Cancelar</a>
         </div>
     </form>
+    {account_status_script(status)}
     """
 
 
@@ -551,8 +695,10 @@ class App(BaseHTTPRequestHandler):
         by_status = {r["status"]: r["total"] for r in rows}
         return {
             "total": total,
-            "reenvio_60": by_status.get("Disponível para teste de reenvio 60 dias", 0),
-            "reenvio_90": by_status.get("Disponível para teste de reenvio 90 dias", 0),
+            "ps_reenvio_60": by_status.get("Disponível para teste de reenvio 60 dias", 0),
+            "ps_reenvio_90": by_status.get("Disponível para teste de reenvio 90 dias", 0),
+            "xbox_reenvio_60": by_status.get("Disponível para teste de reenvio Xbox 60 dias", 0),
+            "xbox_reenvio_120": by_status.get("Disponível para teste de reenvio Xbox 120 dias", 0),
             "uso": by_status.get("Conta em utilização", 0),
             "falhou": by_status.get("Não funcionou o Reenvio", 0),
         }
@@ -566,8 +712,10 @@ class App(BaseHTTPRequestHandler):
         conn.close()
         cards = [
             ("Em utilização", counts["uso"]),
-            ("Reenvio 60 dias", counts["reenvio_60"]),
-            ("Reenvio 90 dias", counts["reenvio_90"]),
+            ("Playstation 60 dias", counts["ps_reenvio_60"]),
+            ("Playstation 90 dias", counts["ps_reenvio_90"]),
+            ("Xbox 60 dias", counts["xbox_reenvio_60"]),
+            ("Xbox 120 dias", counts["xbox_reenvio_120"]),
             ("Não funcionou o Reenvio", counts["falhou"]),
             ("Total cadastrado", counts["total"]),
         ]
@@ -575,7 +723,7 @@ class App(BaseHTTPRequestHandler):
         <section class="section-head">
             <div>
                 <h1>Dashboard</h1>
-                <p>Regra automática: contas com 60 e 90 dias entram nas filas de teste de reenvio correspondentes.</p>
+                <p>Regra automática: Playstation usa 60/90 dias. Xbox usa 60 dias para secundária e 120 dias para primária.</p>
             </div>
             <a class="button primary" href="/accounts/new">Cadastrar conta</a>
         </section>
@@ -685,6 +833,8 @@ class App(BaseHTTPRequestHandler):
         return {
             "Disponível para teste de reenvio 60 dias": "review60",
             "Disponível para teste de reenvio 90 dias": "review90",
+            "Disponível para teste de reenvio Xbox 60 dias": "xbox60",
+            "Disponível para teste de reenvio Xbox 120 dias": "xbox120",
             "Conta em utilização": "use",
             "Não funcionou o Reenvio": "failed",
         }.get(status, "")
@@ -693,7 +843,7 @@ class App(BaseHTTPRequestHandler):
         return f"""
         <form method="post" action="/accounts/status" class="status-form">
             <input type="hidden" name="id" value="{row['id']}">
-            <select name="status" aria-label="Status da conta">{options(STATUSES, row['status'], None)}</select>
+            <select name="status" aria-label="Status da conta">{status_options(row['platform'], row['status'], None)}</select>
             <button type="submit">Alterar</button>
         </form>
         """
@@ -735,7 +885,7 @@ class App(BaseHTTPRequestHandler):
             errors.append("Selecione o tipo de mídia.")
         if "@" not in email:
             errors.append("Informe um e-mail válido.")
-        if status not in STATUSES:
+        if status not in allowed_statuses(platform):
             errors.append("Selecione um status válido.")
         return errors, {
             "platform": platform,
@@ -800,9 +950,11 @@ class App(BaseHTTPRequestHandler):
         form = self.read_form()
         account_id = form.get("id", "")
         status = form.get("status", "")
-        if status not in STATUSES:
-            return self.redirect("/accounts")
         conn = db()
+        account = conn.execute("SELECT platform, media_type FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        if not account or status not in allowed_statuses(account["platform"]):
+            conn.close()
+            return self.redirect("/accounts")
         today = date.today().isoformat()
         if status == "Conta em utilização":
             conn.execute(
@@ -843,8 +995,10 @@ class App(BaseHTTPRequestHandler):
         </section>
         {self.filter_form(filters, '/reports')}
         <section class="cards">
-            <article><span>Reenvio 60 dias</span><strong>{counts['reenvio_60']}</strong></article>
-            <article><span>Reenvio 90 dias</span><strong>{counts['reenvio_90']}</strong></article>
+            <article><span>Playstation 60 dias</span><strong>{counts['ps_reenvio_60']}</strong></article>
+            <article><span>Playstation 90 dias</span><strong>{counts['ps_reenvio_90']}</strong></article>
+            <article><span>Xbox 60 dias</span><strong>{counts['xbox_reenvio_60']}</strong></article>
+            <article><span>Xbox 120 dias</span><strong>{counts['xbox_reenvio_120']}</strong></article>
             <article><span>Em utilização</span><strong>{counts['uso']}</strong></article>
             <article><span>Não funcionou o Reenvio</span><strong>{counts['falhou']}</strong></article>
             <article><span>Total cadastrado</span><strong>{counts['total']}</strong></article>
