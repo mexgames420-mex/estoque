@@ -75,9 +75,12 @@ O sistema faz assim:
 - Usa o e-mail encontrado no bloco.
 - Linhas com `PS4` ou `PS5` viram vagas `Primária`, usam plataforma `Playstation` e adicionam `PS4` ou `PS5` no nome do jogo. Exemplo: produto informado `Split Fiction` + linha com `PS5` vira `Split Fiction PS5`.
 - Linhas com `SECUNDARIA` viram vagas `Secundária`.
+- Para Xbox, use plataforma `Xbox`. O sistema lê entradas como `primaria 08/04/26` e `secundaria 24/03/26`, inclusive quando várias aparecem na mesma linha da planilha.
+- No Xbox, o sistema não separa One e Series; o produto fica exatamente como você informou.
 - A última data encontrada na linha vira a `Data do último envio` daquela vaga.
+- No Xbox, o sistema salva somente a data mais recente da vaga `Primária` e a data mais recente da vaga `Secundária`.
 - Se uma vaga não tiver data no bloco, o sistema considera que ela foi enviada há 30 dias.
-- Senha, data de nascimento, usuário e códigos não são salvos.
+- Senha, data de nascimento, usuário, códigos e WhatsApp não são salvos.
 
 Há um arquivo de exemplo em `sample_block.txt`.
 

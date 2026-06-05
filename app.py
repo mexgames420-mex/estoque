@@ -27,8 +27,10 @@ STATUSES = [
     "Disponível para teste de reenvio 90 dias",
     "Não funcionou o Reenvio",
 ]
-DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})\b")
+DATE_PATTERN = r"\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}"
+DATE_RE = re.compile(rf"\b({DATE_PATTERN})\b")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
+XBOX_ENTRY_RE = re.compile(rf"\b(?:c\s+)?(primaria|primária|secundaria|secundária)\s+({DATE_PATTERN})\b", re.IGNORECASE)
 OLDEST_SENT_ORDER = "ORDER BY last_sent_at IS NULL, last_sent_at ASC, product ASC, media_type ASC, id ASC"
 EMAIL_MARKER_SENT_DATE = "2026-01-31"
 
@@ -239,6 +241,22 @@ def parse_block_lines(product, default_platform, block_text):
     current_email = ""
     latest_by_slot = {}
     ignored = 0
+
+    def keep_latest(row, date_priority):
+        key = (row["email"], row["platform"], row["product"], row["media_type"])
+        previous = latest_by_slot.get(key)
+        if previous is None:
+            row["date_priority"] = date_priority
+            latest_by_slot[key] = row
+            return
+        if date_priority > previous["date_priority"]:
+            row["date_priority"] = date_priority
+            latest_by_slot[key] = row
+            return
+        if date_priority == previous["date_priority"] and row["last_sent_at"] > previous["last_sent_at"]:
+            row["date_priority"] = date_priority
+            latest_by_slot[key] = row
+
     for raw_line in block_text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -247,9 +265,30 @@ def parse_block_lines(product, default_platform, block_text):
         email_match = EMAIL_RE.search(line)
         if email_match:
             current_email = email_match.group(0).lower()
-            continue
+            line = line[email_match.end():].strip()
+            if not line:
+                continue
 
         upper = line.upper()
+        xbox_entries = list(XBOX_ENTRY_RE.finditer(line))
+        if current_email and (default_platform == "Xbox" or "XBOX" in upper) and xbox_entries:
+            for entry in xbox_entries:
+                media_type = normalize_media_type("Xbox", entry.group(1))
+                last_sent_at = parse_date(entry.group(2))
+                keep_latest(
+                    {
+                        "platform": "Xbox",
+                        "product": product.strip(),
+                        "media_type": media_type,
+                        "email": current_email,
+                        "status": "Conta em utilização",
+                        "last_sent_at": last_sent_at,
+                        "notes": "Adicionado por bloco de contas. Senha, código e WhatsApp não foram salvos.",
+                    },
+                    3,
+                )
+            continue
+
         media_type = ""
         if "SECUNDARIA" in upper or "SECUNDÁRIA" in upper:
             media_type = "Secundária"
@@ -283,25 +322,13 @@ def parse_block_lines(product, default_platform, block_text):
             "email": current_email,
             "status": "Conta em utilização",
             "last_sent_at": last_sent_at,
-            "has_real_date": has_real_date,
-            "date_priority": date_priority,
             "notes": "Adicionado por bloco de contas. Senha e código não foram salvos.",
         }
-        key = (row["email"], row["platform"], row["product"], row["media_type"])
-        previous = latest_by_slot.get(key)
-        if previous is None:
-            latest_by_slot[key] = row
-            continue
-        if date_priority > previous["date_priority"]:
-            latest_by_slot[key] = row
-            continue
-        if date_priority == previous["date_priority"] and last_sent_at > previous["last_sent_at"]:
-            latest_by_slot[key] = row
+        keep_latest(row, date_priority)
 
     rows = []
     for row in latest_by_slot.values():
         clean_row = dict(row)
-        clean_row.pop("has_real_date", None)
         clean_row.pop("date_priority", None)
         rows.append(clean_row)
     rows = sorted(
