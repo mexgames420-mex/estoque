@@ -757,13 +757,14 @@ class App(BaseHTTPRequestHandler):
         fields = {
             "platform": "platform",
             "product": "product",
+            "email": "email",
             "media_type": "media_type",
             "status": "status",
         }
         for key, column in fields.items():
             value = filters.get(key, "")
             if value:
-                if key == "product":
+                if key in ("product", "email"):
                     clauses.append(f"{column} LIKE ?")
                     params.append(f"%{value}%")
                 else:
@@ -773,13 +774,14 @@ class App(BaseHTTPRequestHandler):
 
     def filters_from_query(self):
         qs = self.query()
-        return {k: qs.get(k, [""])[0] for k in ("platform", "product", "media_type", "status")}
+        return {k: qs.get(k, [""])[0] for k in ("platform", "product", "email", "media_type", "status")}
 
     def filter_form(self, filters, action):
         return f"""
         <form class="filters" method="get" action="{action}">
             <label>Plataforma<select name="platform">{options(PLATFORMS, filters.get('platform', ''))}</select></label>
             <label>Produto/Jogo<input name="product" value="{esc(filters.get('product', ''))}" placeholder="Buscar produto"></label>
+            <label>E-mail<input name="email" value="{esc(filters.get('email', ''))}" placeholder="Buscar e-mail"></label>
             <label>Tipo de mídia<select name="media_type">{options(MEDIA_TYPES, filters.get('media_type', ''))}</select></label>
             <label>Status<select name="status">{options(STATUSES, filters.get('status', ''))}</select></label>
             <button class="primary" type="submit">Filtrar</button>
