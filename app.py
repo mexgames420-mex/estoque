@@ -450,6 +450,7 @@ def layout(title, body, user=None, active=""):
         ("/accounts", "Contas", "accounts"),
         ("/reports", "Relatórios", "reports"),
         ("/blocks", "Adicionar bloco", "blocks"),
+        ("/cleanup", "Limpar produto", "cleanup"),
     ]
     nav_links = "".join(
         f'<a class="{"active" if active == key else ""}" href="{href}">{label}</a>'
@@ -655,6 +656,8 @@ class App(BaseHTTPRequestHandler):
             return self.reports(user)
         if path == "/blocks":
             return self.block_page(user)
+        if path == "/cleanup":
+            return self.cleanup_page(user)
         if path == "/import":
             return self.redirect("/blocks")
         self.send_html(layout("Não encontrado", "<h1>Página não encontrada</h1>", user), 404)
@@ -675,6 +678,8 @@ class App(BaseHTTPRequestHandler):
             return self.update_account_status(user)
         if path == "/blocks":
             return self.add_block(user)
+        if path == "/cleanup":
+            return self.cleanup_product(user)
         if path == "/import":
             return self.redirect("/blocks")
         self.send_html(layout("Não encontrado", "<h1>Página não encontrada</h1>", user), 404)
@@ -1029,6 +1034,99 @@ class App(BaseHTTPRequestHandler):
         ]
         conn.close()
         return "".join(f'<option value="{esc(product)}"></option>' for product in products)
+
+    def count_product_accounts(self, platform, product):
+        conn = db()
+        total = conn.execute(
+            """
+            SELECT COUNT(*)
+              FROM accounts
+             WHERE platform = ?
+               AND lower(product) = lower(?)
+            """,
+            (platform, product),
+        ).fetchone()[0]
+        conn.close()
+        return total
+
+    def cleanup_page(self, user, message="", form=None, preview_count=None):
+        form = form or {}
+        product = form.get("product", "").strip()
+        platform = form.get("platform", "Playstation").strip()
+        delete_button = ""
+        if preview_count is not None and preview_count > 0:
+            delete_button = f"""
+            <div class="danger-zone wide">
+                <p>{preview_count} conta(s) encontradas para esse produto e plataforma.</p>
+                <label>Digite APAGAR para confirmar
+                    <input name="confirm_delete" required autocomplete="off" placeholder="APAGAR">
+                </label>
+                <button class="danger" type="submit" name="action" value="delete">Apagar contas</button>
+            </div>
+            """
+        elif preview_count == 0:
+            message += '<div class="alert error">Nenhuma conta encontrada para esse produto e plataforma.</div>'
+        body = f"""
+        <section class="section-head">
+            <div>
+                <h1>Limpar produto</h1>
+                <p>Apague todas as contas de um produto específico em uma plataforma.</p>
+            </div>
+        </section>
+        {message}
+        <section class="panel">
+            <form method="post" class="form-panel" autocomplete="off">
+                <label>Produto/Jogo
+                    <input name="product" list="products" value="{esc(product)}" required maxlength="120" placeholder="Ex: Elden Ring DLC Shadow of The Erdtree">
+                    <datalist id="products">{self.product_options()}</datalist>
+                </label>
+                <label>Plataforma
+                    <select name="platform" required>{options(PLATFORMS, platform, None)}</select>
+                </label>
+                <div class="actions wide">
+                    <button class="primary" type="submit" name="action" value="preview">Verificar</button>
+                    <a class="button" href="/cleanup">Limpar</a>
+                </div>
+                {delete_button}
+            </form>
+            <div class="hint">
+                A busca usa o nome exato do produto e a plataforma selecionada. Produtos com PS4 ou PS5 no nome precisam ser digitados da mesma forma que aparecem na tabela.
+            </div>
+        </section>
+        """
+        self.send_html(layout("Limpar produto", body, user, "cleanup"))
+
+    def cleanup_product(self, user):
+        form = self.read_form()
+        action = form.get("action", "preview")
+        product = form.get("product", "").strip()
+        platform = form.get("platform", "").strip()
+        if not product:
+            return self.cleanup_page(user, '<div class="alert error">Informe o produto/jogo.</div>', form)
+        if platform not in PLATFORMS:
+            return self.cleanup_page(user, '<div class="alert error">Selecione uma plataforma válida.</div>', form)
+        if action != "delete":
+            return self.cleanup_page(user, form=form, preview_count=self.count_product_accounts(platform, product))
+        if form.get("confirm_delete", "").strip().upper() != "APAGAR":
+            return self.cleanup_page(
+                user,
+                '<div class="alert error">Digite APAGAR para confirmar a exclusão.</div>',
+                form,
+                self.count_product_accounts(platform, product),
+            )
+        conn = db()
+        cur = conn.execute(
+            """
+            DELETE FROM accounts
+             WHERE platform = ?
+               AND lower(product) = lower(?)
+            """,
+            (platform, product),
+        )
+        conn.commit()
+        conn.close()
+        message = f'<div class="alert success">{cur.rowcount} conta(s) apagadas de {esc(product)} em {esc(platform)}.</div>'
+        return self.cleanup_page(user, message, {"product": "", "platform": platform})
 
     def block_page(self, user, message="", form=None):
         form = form or {}

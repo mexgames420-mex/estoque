@@ -238,6 +238,16 @@ button.primary:hover,
     background: var(--primary-dark);
 }
 
+button.danger {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+}
+
+button.danger:hover {
+    background: #7f1d1d;
+}
+
 .filters button,
 .filters .button {
     align-self: end;
@@ -368,6 +378,21 @@ th {
 .alert.success {
     background: var(--ok-bg);
     color: var(--ok);
+}
+
+.danger-zone {
+    background: #fff1f2;
+    border: 1px solid #fecdd3;
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+}
+
+.danger-zone p {
+    color: var(--danger);
+    font-weight: 750;
+    margin-bottom: 0;
 }
 
 .login-box {
