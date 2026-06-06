@@ -521,6 +521,17 @@ def account_status_script(selected):
     """
 
 
+def safe_return_to(value, fallback="/accounts"):
+    value = (value or "").strip()
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        return fallback
+    if parsed.path not in ("/accounts", "/reports"):
+        return fallback
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.path}{query}"
+
+
 def account_form(row=None, errors=None):
     row = row or {}
     platform = row.get("platform", "Playstation")
@@ -794,11 +805,11 @@ class App(BaseHTTPRequestHandler):
             <a class="button primary" href="/accounts/new">Cadastrar conta</a>
         </section>
         {self.filter_form(filters, '/accounts')}
-        <section class="panel">{self.table(rows)}</section>
+        <section class="panel">{self.table(rows, return_to=self.path)}</section>
         """
         self.send_html(layout("Contas", body, user, "accounts"))
 
-    def table(self, rows, compact=False):
+    def table(self, rows, compact=False, return_to=""):
         if not rows:
             return '<div class="empty">Nenhuma conta encontrada.</div>'
         head = """
@@ -811,7 +822,7 @@ class App(BaseHTTPRequestHandler):
         for row in rows:
             status_cell = self.status_badge(row)
             if not compact:
-                status_cell += self.status_action(row)
+                status_cell += self.status_action(row, return_to)
             body_rows.append(
                 f"""
                 <tr>
@@ -839,10 +850,11 @@ class App(BaseHTTPRequestHandler):
             "Não funcionou o Reenvio": "failed",
         }.get(status, "")
 
-    def status_action(self, row):
+    def status_action(self, row, return_to=""):
         return f"""
         <form method="post" action="/accounts/status" class="status-form">
             <input type="hidden" name="id" value="{row['id']}">
+            <input type="hidden" name="return_to" value="{esc(safe_return_to(return_to))}">
             <select name="status" aria-label="Status da conta">{status_options(row['platform'], row['status'], None)}</select>
             <button type="submit">Alterar</button>
         </form>
@@ -950,11 +962,12 @@ class App(BaseHTTPRequestHandler):
         form = self.read_form()
         account_id = form.get("id", "")
         status = form.get("status", "")
+        return_to = safe_return_to(form.get("return_to", ""))
         conn = db()
         account = conn.execute("SELECT platform, media_type FROM accounts WHERE id = ?", (account_id,)).fetchone()
         if not account or status not in allowed_statuses(account["platform"]):
             conn.close()
-            return self.redirect("/accounts")
+            return self.redirect(return_to)
         today = date.today().isoformat()
         if status == "Conta em utilização":
             conn.execute(
@@ -981,7 +994,7 @@ class App(BaseHTTPRequestHandler):
             )
         conn.commit()
         conn.close()
-        self.redirect("/accounts")
+        self.redirect(return_to)
 
     def reports(self, user):
         filters = self.filters_from_query()
