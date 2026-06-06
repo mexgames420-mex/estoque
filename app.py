@@ -208,6 +208,40 @@ def normalize_status_for_platform(status, platform, media_type):
     return review_status_for_account(platform, media_type, 90)
 
 
+def product_case_score(product):
+    product = product or ""
+    return sum(1 for char in product if char.isupper())
+
+
+def best_product_name(products):
+    clean = [product.strip() for product in products if product and product.strip()]
+    if not clean:
+        return ""
+    return sorted(clean, key=lambda product: (-product_case_score(product), len(product), product.lower()))[0]
+
+
+def normalize_existing_product_names(conn):
+    groups = {}
+    rows = conn.execute("SELECT platform, product FROM accounts").fetchall()
+    for row in rows:
+        key = (row["platform"], row["product"].strip().lower())
+        groups.setdefault(key, set()).add(row["product"].strip())
+    for (platform, lowered), products in groups.items():
+        if len(products) < 2:
+            continue
+        canonical = best_product_name(products)
+        conn.execute(
+            """
+            UPDATE accounts
+               SET product = ?,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE platform = ?
+               AND lower(product) = ?
+            """,
+            (canonical, platform, lowered),
+        )
+
+
 def ensure_status_changed_column(conn):
     columns = [row["name"] for row in conn.execute("PRAGMA table_info(accounts)").fetchall()]
     if "status_changed_at" not in columns:
@@ -253,6 +287,7 @@ def migrate_statuses():
          WHERE platform IN ('PS4', 'PS5')
         """
     )
+    normalize_existing_product_names(conn)
     conn.execute(
         """
         UPDATE accounts
@@ -1035,6 +1070,20 @@ class App(BaseHTTPRequestHandler):
         conn.close()
         return "".join(f'<option value="{esc(product)}"></option>' for product in products)
 
+    def canonical_product_name(self, conn, platform, product):
+        rows = conn.execute(
+            """
+            SELECT DISTINCT product
+              FROM accounts
+             WHERE platform = ?
+               AND lower(product) = lower(?)
+            """,
+            (platform, product),
+        ).fetchall()
+        if not rows:
+            return product
+        return best_product_name([row["product"] for row in rows] + [product])
+
     def count_product_accounts(self, platform, product):
         conn = db()
         total = conn.execute(
@@ -1181,13 +1230,14 @@ class App(BaseHTTPRequestHandler):
         created = 0
         updated = 0
         for row in rows:
+            row["product"] = self.canonical_product_name(conn, row["platform"], row["product"])
             existing = conn.execute(
                 """
-                SELECT id, status
+                SELECT id, status, product
                   FROM accounts
                  WHERE email = ?
                    AND platform = ?
-                   AND product = ?
+                   AND lower(product) = lower(?)
                    AND media_type = ?
                  ORDER BY id
                  LIMIT 1
