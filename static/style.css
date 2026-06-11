@@ -339,6 +339,11 @@ th {
     color: #9f1239;
 }
 
+.badge.suspended {
+    background: #e5e7eb;
+    color: #374151;
+}
+
 .status-form {
     align-items: center;
     display: grid;

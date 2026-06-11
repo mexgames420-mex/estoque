@@ -25,6 +25,7 @@ MEDIA_TYPES = ["Primária", "Secundária"]
 COMMON_STATUSES = [
     "Conta em utilização",
     "Não funcionou o Reenvio",
+    "Conta suspensa",
 ]
 PLAYSTATION_STATUSES = [
     "Disponível para teste de reenvio 60 dias",
@@ -39,7 +40,19 @@ DATE_PATTERN = r"\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}"
 DATE_RE = re.compile(rf"\b({DATE_PATTERN})\b")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 XBOX_ENTRY_RE = re.compile(rf"\b(?:c\s+)?(primaria|primária|secundaria|secundária)\s+({DATE_PATTERN})\b", re.IGNORECASE)
-OLDEST_SENT_ORDER = "ORDER BY last_sent_at IS NULL, last_sent_at ASC, product ASC, media_type ASC, id ASC"
+OLDEST_SENT_ORDER = """
+ORDER BY
+    CASE
+        WHEN status = 'Conta suspensa' THEN 2
+        WHEN status = 'Não funcionou o Reenvio' THEN 1
+        ELSE 0
+    END,
+    last_sent_at IS NULL,
+    last_sent_at ASC,
+    product ASC,
+    media_type ASC,
+    id ASC
+"""
 EMAIL_MARKER_SENT_DATE = "2026-01-31"
 
 
@@ -752,6 +765,7 @@ class App(BaseHTTPRequestHandler):
             "xbox_reenvio_120": by_status.get("Disponível para teste de reenvio Xbox 120 dias", 0),
             "uso": by_status.get("Conta em utilização", 0),
             "falhou": by_status.get("Não funcionou o Reenvio", 0),
+            "suspensa": by_status.get("Conta suspensa", 0),
         }
 
     def dashboard(self, user):
@@ -768,6 +782,7 @@ class App(BaseHTTPRequestHandler):
             ("Xbox 60 dias", counts["xbox_reenvio_60"]),
             ("Xbox 120 dias", counts["xbox_reenvio_120"]),
             ("Não funcionou o Reenvio", counts["falhou"]),
+            ("Conta suspensa", counts["suspensa"]),
             ("Total cadastrado", counts["total"]),
         ]
         body = f"""
@@ -890,6 +905,7 @@ class App(BaseHTTPRequestHandler):
             "Disponível para teste de reenvio Xbox 120 dias": "xbox120",
             "Conta em utilização": "use",
             "Não funcionou o Reenvio": "failed",
+            "Conta suspensa": "suspended",
         }.get(status, "")
 
     def status_action(self, row, return_to=""):
@@ -1056,6 +1072,7 @@ class App(BaseHTTPRequestHandler):
             <article><span>Xbox 120 dias</span><strong>{counts['xbox_reenvio_120']}</strong></article>
             <article><span>Em utilização</span><strong>{counts['uso']}</strong></article>
             <article><span>Não funcionou o Reenvio</span><strong>{counts['falhou']}</strong></article>
+            <article><span>Conta suspensa</span><strong>{counts['suspensa']}</strong></article>
             <article><span>Total cadastrado</span><strong>{counts['total']}</strong></article>
         </section>
         """
