@@ -407,7 +407,7 @@ def parse_block_lines(product, default_platform, block_text):
             row["date_priority"] = date_priority
             latest_by_slot[key] = row
             return
-        if date_priority == previous["date_priority"] and row["last_sent_at"] > previous["last_sent_at"]:
+        if date_priority == previous["date_priority"] and (row["last_sent_at"] or "") > (previous["last_sent_at"] or ""):
             row["date_priority"] = date_priority
             latest_by_slot[key] = row
 
@@ -429,6 +429,9 @@ def parse_block_lines(product, default_platform, block_text):
             for entry in xbox_entries:
                 media_type = normalize_media_type("Xbox", entry.group(1))
                 last_sent_at = parse_date(entry.group(2))
+                date_priority = 3 if last_sent_at else 1
+                if not last_sent_at:
+                    last_sent_at = (date.today() - timedelta(days=30)).isoformat()
                 keep_latest(
                     {
                         "platform": "Xbox",
@@ -439,7 +442,7 @@ def parse_block_lines(product, default_platform, block_text):
                         "last_sent_at": last_sent_at,
                         "notes": "Adicionado por bloco de contas. Senha, código e WhatsApp não foram salvos.",
                     },
-                    3,
+                    date_priority,
                 )
             continue
 
@@ -461,7 +464,11 @@ def parse_block_lines(product, default_platform, block_text):
         is_playstation_email_marker = ("PS4" in upper or "PS5" in upper) and "EMAIL" in upper
         if dates:
             last_sent_at = parse_date(dates[-1])
-            date_priority = 3
+            if last_sent_at:
+                date_priority = 3
+            else:
+                last_sent_at = (date.today() - timedelta(days=30)).isoformat()
+                date_priority = 1
         elif is_playstation_email_marker:
             last_sent_at = EMAIL_MARKER_SENT_DATE
             date_priority = 2
